@@ -10,12 +10,8 @@ class S4P_Response(BaseResponse):
 
     success_codes = {
         50: ("SYNCHACK", "synchronization is successful"),
-        51: ("NOCHANGE", "local data is up to date"),
-        52: ("CREATDRM", "room creation is successful"),
         53: ("JOINEDRM", "joining the room is successful"),
-        54: ("RMSLISTS", "listing available rooms is successful"),
-        55: ("MESGSENT", "message is sent"),
-        56: ("MSGSAVED", "message is saved on the server"),
+        57: ("KEYXCHGD", "key exchanged succesfully"),
     }
 
     failure_codes = {
@@ -46,20 +42,15 @@ class S4P_Response(BaseResponse):
     # success codes
 
     @staticmethod
+    def KEYXCHGD(message: str, data=None):
+        return S4P_Response(57, message, True, data)
+    @staticmethod
     def SYNCHACK(message: str, data=None):
         return S4P_Response(50, message, True, data)
 
     @staticmethod
-    def NOCHANGE(message: str, data=None):
-        return S4P_Response(51, message, True, data)
-
-    @staticmethod
     def CREATDRM(message: str, data=None):
         return S4P_Response(52, message, True, data)
-
-    @staticmethod
-    def JOINEDRM(message: str, data=None):
-        return S4P_Response(53, message, True, data)
 
     @staticmethod
     def RMSLISTS(message: str, data=None):
@@ -146,53 +137,22 @@ class S4P_Response(BaseResponse):
 
 class S4P_Request:
     # RECH <<username>> requests private chat with a user
-    # - Returns 52 CREATDRM: If room creation is successful.
     # -
-    # SYNCHR - Synchronize data
-    # Syntax: SYNC <<username>> Synchronizes user's data from the server
-    # - Returns 50 SYNCHACK: If the auth is correct.
-    # - Returns 51 NOCHANGE: If the local data is up to date.
-    # - Returns 70 INCRAUTH: If auth is incorrect, key mismatch.
-    # - Returns 71 UNKACCNT: If auth is incorrect, unknown username.
-    # RMCTRL - Room Control
-    # Syntax: RMCTRL <<kind>>
-    # Manipulates rooms, either listing, joining or creating by specifying kind as:
-    # - MAKERM <<room_name>> - Creates a new room
-    # - Returns 52 CREATDRM: If room creation is successful.
-    # - Returns 79 UNKWNERR: If an unknown error happened.
-    # - JOINRM <<auth>> <<room_id>> - Joins a room
-    # - Returns 53 JOINEDRM: If the process of joining the room is successful.
-    # - Returns 72 UNKNWNRM: If the room ID was not found
-    # - Returns 78 ISIDLERM: If the user is already inside the room
-    # - Returns auth errors
-    # - LISTRM <<auth>> - Lists available rooms
-    # - Returns 54 RMSLISTS: If auth is successful, shows all the rooms
-    # - Returns auth errors
+
     # SNDMSG - Send a message
     # Syntax: SNDMSG <<auth>> <<type>> Sends a message to a specific directive
     # - PRIVRCP <<recipient>> - Sends a private message to a private recipient
     # - Returns 55 MESGSENT: If the message was sent.
     # - Returns 73 UNKRCPNT: If the recipient doesn't exist.
     # - Returns 74 RCPNTOFF: If the recipient is offline, should be accompanied by another request with type
-    # PRIVSRVR.
+    # PRIVRM.
     # - Returns auth errors.
     # - TOAVLRM <<room_id> - Sends a message to an available room
-    # - Returns 55 MESGSENT: If the message was sent.
+    # - Returns 52 CREATDRM: If room creation is successful.
+    # - Returns 57 KEYEXCHED: ifkey exhange is successfll.
     # - Returns 75 RMNOTACK: If the room ID was not found in the user's joined rooms (but might exist
     # elsewhere).
-    # - Returns 76 ALLRMOFF: If all the members of the room are offline, should be accompanied by another
-    # request with type ROOMSRVR.
-    # - Returns auth errors
-    # - PRIVSVR <<recipient>> - Sends a private message to server
-    # - Returns 56 MSGSAVED: If the message was saved on the server.
-    # - Returns 73 UNKRCPNT: If the recipient doesn't exist.
-    # - Returns auth errors
-    # - TOPRVRM <<room_id>> - Sends a public room message to server
-    # - Returns 56 MSGSAVED: If the message was saved on the server.
-    # - Returns 75 RMNOTACK: If the room ID was not found in the user's joined rooms (but might exist
-    # elsewhere).
-    # - Returns auth errors
-    types = {"SYNC", "RMCTRL", "SNDMSG", "PRIVRM"}
+    types = {"SYNC",  "SNDMSG", "PRIVRM", "EXCHGKEY"}
 
     def __init__(self, connection):
         self.connection = connection
@@ -205,40 +165,29 @@ class S4P_Request:
             "username": username,
         }
 
-    @staticmethod
-    def rmctrl_request(
-        kind: str, auth: str, room_id: str = None, room_name: str = None
-    ):
-        if kind == "MAKERM":
-            return {
-                "type": "RMCTRL",
-                "kind": kind,
-                "room_name": room_name,
-            }
-        elif kind == "JOINRM":
-            return {
-                "type": "RMCTRL",
-                "kind": kind,
-                "auth": auth,
-                "room_id": room_id,
-            }
-        elif kind == "LISTRM":
-            return {
-                "type": "RMCTRL",
-                "kind": kind,
-                "auth": auth,
-            }
-        else:
-            raise ValueError(f"Unknown kind {kind}")
+
 
     @staticmethod
-    def privrm_request(sender, recipient):
+    def privrm_request(sender, recipient,key):
         """p2p protocol"""
         return {
             "type": "PRIVRM",
             "sender": sender,
             "recipient": recipient,
+            "key":key,
         }
+
+    @staticmethod
+    def exchange_key_request(sender, recipient,key,symmetric_key):
+        """p2p protocol"""
+        return {
+            "type": "EXCHGKEY",
+            "sender": sender,
+            "key":key,
+            "symmetric_key":symmetric_key,
+            "recipient": recipient,
+        }
+
 
     @staticmethod
     def gtrm_request(sender, chatroom_key):

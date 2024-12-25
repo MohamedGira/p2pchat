@@ -9,7 +9,7 @@ from typing import Union
 
 from p2pchat.protocols.tcp_request_transceiver import (
     TCPRequestTransceiver,
-    UDPRequestTransceiver,
+    TCPRequestSecureTransciver,
 )
 from p2pchat.protocols.suap import SUAP_Request
 from p2pchat.protocols.s4p import S4P_Request
@@ -26,6 +26,7 @@ import logging
 from p2pchat.custom_logger import app_logger  # may use different loggers later
 from p2pchat.globals import not_chatting, peer_left, ignore_input, is_in_chat
 from p2pchat.utils.utils import validate_request
+from p2pchat.security import security_manager
 
 
 class KeepAliveThread(threading.Thread):
@@ -154,34 +155,6 @@ class ClientTCPThread:
         self.client_socket.close()
         return response
 
-    def create_chatroom(self, chatroom_key):
-        if not (self.connect()):
-            return {
-                "header": "",
-                "body": {"is_success": False, "message": "Connection failed"},
-            }
-        self.transceiver.send_message(
-            {
-                "type": "CRTM",
-                "user": self.client_auth.user,
-                "chatroom_key": chatroom_key,
-            }
-        )
-        response = self.transceiver.recieve_message()
-        self.client_socket.close()
-        return response
-
-    def get_chatrooms(self):
-        if not (self.connect()):
-            return {
-                "header": "",
-                "body": {"is_success": False, "message": "Connection failed"},
-            }
-        self.transceiver.send_message({"type": "LISTRM", "user": self.client_auth.user})
-        response = self.transceiver.recieve_message()
-        self.client_socket.close()
-        return response
-
     def get_chatroom(self, chatroom_key):
         if not (self.connect()):
             return {
@@ -190,24 +163,6 @@ class ClientTCPThread:
             }
         self.transceiver.send_message(
             S4P_Request.gtrm_request(self.client_auth.user, chatroom_key)
-        )
-        response = self.transceiver.recieve_message()
-        self.client_socket.close()
-        return response
-
-    def admit_user_to_chatroom(self, user, chatroom_key):
-        if not (self.connect()):
-            return {
-                "header": "",
-                "body": {"is_success": False, "message": "Connection failed"},
-            }
-        self.transceiver.send_message(
-            {
-                "type": "ADMTUSR",
-                "caller": self.client_auth.user,
-                "user": user,
-                "chatroom_key": chatroom_key,
-            }
         )
         response = self.transceiver.recieve_message()
         self.client_socket.close()
@@ -384,7 +339,7 @@ class PeerClient:
 
     def __init__(self):
         self.peer_socket = None
-        self.transceiver = TCPRequestTransceiver(self.peer_socket)
+        self.transceiver = TCPRequestSecureTransciver(self.peer_socket)
         self.client_auth_instance = ClientAuth()
 
     def enter_chat(self, me, recepient):
@@ -394,10 +349,17 @@ class PeerClient:
         if not (self.connect(recepient)):
             print(colorize("could not connect to user", "red"))
             return None
+        key = security_manager.KeyExchange().initiate_exchange()
         self.transceiver.send_message(
-            S4P_Request.privrm_request(self.client_auth_instance.user, recepient)
+            S4P_Request.privrm_request(self.client_auth_instance.user, recepient, key)
         )
         response = self.transceiver.recieve_message()
+        if response and response.get("body").get("code") == 57:
+            security_manager.KeyExchange().complete_exchange(
+                peer_public_key_bytes=response.get("body").get("data").get("key"),
+                encrypted_fernet_key= response.get("body").get("data").get("symmetric_key")
+            )
+        ##exchange keys here
         return PeerClient.process_response(response)
 
     def chat(self, me, recipient, chat_key):
@@ -436,6 +398,8 @@ class PeerClient:
                     if message == "exit_":
                         is_in_chat.clear()
                         history.reset_history()
+                        security_manager.SecurityManager().reset()
+                        security_manager.KeyExchange().reset()
                         print(colorize(f"You left the conversation.", "green"))
                         break
                     print_and_remember(
@@ -478,108 +442,6 @@ class PeerClient:
             )
             sleep(5)
 
-    def chatroom_chat(self):
-        """
-        will handle all messaging related stuff
-
-        args
-
-        chatroom: array of dicts of room JOIN members
-        """
-        # user started chatting, used to pause the cli loop
-        print_and_remember(colorize(f"Chatroom started.", "magenta"))
-        refresh_table = threading.Thread(target=self._refresh_uses_table)
-
-        udp_transceiver = UDPRequestTransceiver()
-
-        try:
-            self.client_auth_instance.current_chatroom = (
-                self.client_auth_instance.current_chatroom
-            )
-            me_prompt_text = "you >> "
-            not_chatting.clear()
-            peer_left.clear()
-            is_in_chat.set()
-            refresh_table.start()
-            popped_in_message = colorize(
-                f"{self.client_auth_instance.user['username']} just popped in !", "blue"
-            )
-            for member in self.client_auth_instance.current_chatroom_peers:
-                udp_transceiver.send_message(
-                    S4P_Request.sndmsg_smpl_request(
-                        popped_in_message,
-                        self.client_auth_instance.current_chatroom,
-                        self.client_auth_instance.user,
-                    ),
-                    (member.get("IP"), member.get("PORT_UDP")),
-                )
-
-            print_and_remember(
-                colorize(f"Chatroom started", "green"),
-                colorize("write exit_ to exit", "magenta"),
-            )
-            while not not_chatting.is_set():  # I know...
-                if not ignore_input.is_set():
-                    message = input(me_prompt_text)
-                    if ignore_input.is_set():
-                        continue
-                    # if chat endded ignore the input
-                    if peer_left.is_set():
-                        not_chatting.set()
-                        break
-                    for member in self.client_auth_instance.current_chatroom_peers:
-                        udp_transceiver.send_message(
-                            S4P_Request.sndmsg_smpl_request(
-                                message,
-                                self.client_auth_instance.current_chatroom,
-                                self.client_auth_instance.user,
-                            ),
-                            (member.get("IP"), member.get("PORT_UDP")),
-                        )
-
-                    if message == "exit_":
-                        is_in_chat.clear()
-                        print(colorize(f"You left the conversation."), "green")
-                        break
-                    print_and_remember(
-                        colorize(
-                            f"{self.client_auth_instance.user['username']} >> ", "green"
-                        )
-                        + message
-                    )
-        finally:
-            not_chatting.set()
-            peer_left.set()
-            self.client_auth_instance.current_chatroom = None
-            self.client_auth_instance.current_chatroom_peers = None
-            print(
-                colorize(
-                    f"Chat ended with room {self.client_auth_instance.current_chatroom}  Press enter to continue.",
-                    "magenta",
-                )
-            )
-
-    def enter_chatroom(self, chatroom_key):
-        if self.client_auth_instance.current_chatroom:
-            print(
-                colorize(
-                    f"you are already in a chatroom {self.client_auth_instance.current_chatroom}",
-                    "red",
-                )
-            )
-            return
-        other_members = self.client_auth_instance._get_chatroom_table(chatroom_key)
-        if other_members is None:
-            print(
-                colorize(
-                    f"could not enter chatroom, make sure you are a member first", "red"
-                )
-            )
-            return
-        self.client_auth_instance.current_chatroom = chatroom_key
-        self.client_auth_instance.current_chatroom_peers = other_members
-        self.chatroom_chat()
-
     def connect(self, user):
         try:
             # before connecting to someone, make sure to close any previous connection
@@ -609,24 +471,6 @@ class PeerClient:
             logging.debug(f"An error occurred during disconnection: {e}")
             pass
 
-    def join_chatroom(self, chatroom: dict):
-        """
-        sends a join chatroom request to the owner, and returns the response in {header:"",body:{}} format
-        chatroom: chat room entry dict {_id,key,owner,IP,PORT}, where IP and PORT are the owner's ip and port
-        """
-        if not validate_request(chatroom, ["key", "owner", "IP", "PORT"]):
-            print(colorize(f"invalid chatroom entry, {chatroom}", "red"))
-            return None
-        if not (self.connect(chatroom)):
-            print(colorize("could not connect to owner", "red"))
-            return None
-
-        self.transceiver.send_message(
-            S4P_Request.joinrm_request(ClientAuth().user, chatroom.get("key"))
-        )
-        response = self.transceiver.recieve_message()
-        return PeerClient.process_response(response)
-
     @staticmethod
     def process_response(response):
         if not response:
@@ -638,5 +482,5 @@ class PeerClient:
             input(colorize("\n\nPress enter to go back to continue.", "yellow"))
         else:
             print(colorize(message if message else "request succeeded", "green"))
-        
+
         return response

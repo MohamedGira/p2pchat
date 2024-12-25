@@ -69,23 +69,6 @@ class TestS4P_Request(unittest.TestCase):
         self.assertEqual(request["sender"], "sender")
         self.assertEqual(request["recipient"], "recipient")
 
-    def test_rmctrl_request(self):
-        request = S4P_Request.rmctrl_request("MAKERM", "auth", room_name="room1")
-        self.assertEqual(request["type"], "RMCTRL")
-        self.assertEqual(request["kind"], "MAKERM")
-        self.assertEqual(request["room_name"], "room1")
-
-        request = S4P_Request.rmctrl_request("JOINRM", "auth", room_id="123")
-        self.assertEqual(request["type"], "RMCTRL")
-        self.assertEqual(request["kind"], "JOINRM")
-        self.assertEqual(request["auth"], "auth")
-        self.assertEqual(request["room_id"], "123")
-
-    def test_request_validation(self):
-        # Test invalid request types
-        with self.assertRaises(ValueError):
-            S4P_Request.rmctrl_request("INVALID", "auth")
-
     def test_privrm_request(self):
         request = S4P_Request.privrm_request("sender", "recipient")
         self.assertEqual(request["type"], "PRIVRM")

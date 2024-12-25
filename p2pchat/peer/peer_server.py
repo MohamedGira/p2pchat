@@ -16,12 +16,15 @@ from p2pchat.utils.chat_history import (
 )
 from p2pchat.globals import is_in_chat, ignore_input, not_chatting, peer_left
 
-from p2pchat.peer.peer_client import PeerClient
 from p2pchat.peer.peer_client import (
-    TCPRequestTransceiver,
+    PeerClient,
     ClientAuth,
-    UDPRequestTransceiver,
 )
+from p2pchat.protocols.tcp_request_transceiver import (
+    UDPRequestTransceiver,
+    TCPRequestSecureTransciver,
+)
+from p2pchat.security import security_manager
 
 
 class PeerTCPManager(SockerManager):
@@ -37,34 +40,41 @@ class PeerTCPManager(SockerManager):
     def handle_request(self):
         try:
             peer_socket, address = self.socket.accept()
-            transciver = TCPRequestTransceiver(peer_socket)
+            transciver = TCPRequestSecureTransciver(peer_socket)
             request = transciver.recieve_message()
             if request:
                 if request.get("body", {}).get("type") == "PRIVRM":
                     res = self.handle_new_chat_request(request).to_dict()
-                    if res.get("is_success"):
-                        transciver.send_message(res)
-                        client = PeerClient()
-                        # print_and_remember(colorize("you are the server", "blue"))
-                        self.chat_thread = threading.Thread(
-                            target=client.chat,
-                            args=(
-                                self.user,
-                                request.get("body").get("sender"),
-                                self.chat_key,
-                            ),
-                        )
-                        self.chat_thread.start()
-                    else:
-                        transciver.send_message(res)
+                    if res.get("code") == 52:
 
+                        security_manager.KeyExchange().complete_exchange(
+                            peer_public_key_bytes=request.get("body").get("key"),
+                        )
+                        transciver.send_message(
+                            S4P_Response.KEYXCHGD(
+                                "key exchanged",
+                                {
+                                    "key": security_manager.SecurityManager().get_public_key_bytes(),
+                                    "symmetric_key": security_manager.KeyExchange().encrypt_fernet_key(
+                                        security_manager.SecurityManager().symmetric_key,
+                                    ),
+                                },
+                            ).to_dict()
+                        )
+                    security_manager.KeyExchange().setup_peer_fernet(security_manager.SecurityManager().symmetric_key)
+                    client = PeerClient()
+                    self.chat_thread = threading.Thread(
+                        target=client.chat,
+                        args=(
+                            self.user,
+                            request.get("body").get("sender"),
+                            self.chat_key,
+                        ),
+                    )
+                    self.chat_thread.start()
                 elif request.get("body", {}).get("type") == "SNDMSG":
                     res = self.handle_send_message_request(request).to_dict()
                     transciver.send_message(res)
-                elif request.get("body", {}).get("type") == "JOINRM":
-                    res = self.handle_join_room_request(request).to_dict()
-                    transciver.send_message(res)
-
         except Exception as e:
             print("Exception Occued: ", e, traceback.print_exc())
             return None
@@ -107,15 +117,17 @@ class PeerTCPManager(SockerManager):
             print(colorize("can't send while user not in chat", "red"))
             return S4P_Response.UNKWNERR(f"can't send while user not in chat")
 
-        if not request or request.get("body", {}).get("key") != self.chat_key:
-            print(colorize("Invalid Request, no or invalid key", "red"), request)
-            return S4P_Response.INCRAUTH("Invalid Request, no or invalid key")
+        # if not request or request.get("body", {}).get("key") != self.chat_key:
+        #    print(colorize("Invalid Request, no or invalid key", "red"), request)
+        #    return S4P_Response.INCRAUTH("Invalid Request, no or invalid key")
 
         sender = request.get("body", {}).get("sender").get("username", "unknown")
         message = request.get("body", {}).get("message", "")
         if message == "exit_":
             peer_left.set()
             self.end_chat()
+            security_manager.SecurityManager().reset()
+            security_manager.KeyExchange().reset()
             print(
                 colorize(
                     f"{sender} left the conversation. Press enter to continue... ",
@@ -194,95 +206,37 @@ class PeerTCPManager(SockerManager):
         return res
 
 
-class PeerUDPManager(SockerManager):
-    def __init__(self, address):
-        self.address = address
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((self.address, 0))
-        self.port = self.socket.getsockname()[1]
-
-    def handle_request(self):
-        try:
-            udp_transciver = UDPRequestTransceiver(self.socket)
-            request, address = udp_transciver.recieve_message()
-            if request:
-                if request.get("body", {}).get("type") == "SNDMSG":
-                    res = self.handle_send_message_request(request).to_dict()
-                    udp_transciver.send_message(res, address)
-
-        except Exception as e:
-            print("Exception Occued: ", e, traceback.print_exc())
-            return None
-
-    def handle_send_message_request(self, request):
-        """handles reciving message requests"""
-        if not is_in_chat.is_set():
-            return S4P_Response.UNKWNERR(f"can't send while user not in chat")
-
-        if (
-            not request
-            or request.get("body", {}).get("key") != ClientAuth().current_chatroom
-        ):
-            print(colorize("Invalid Request, no or invalid key", "red"), request)
-            return S4P_Response.INCRAUTH("Invalid Request, no or invalid key")
-
-        sender_name = request.get("body", {}).get("sender").get("username", "unknown")
-        ClientAuth().update_room_local_table(request.get("body", {}).get("sender"))
-
-        message = request.get("body", {}).get("message", "")
-        if message == "exit_":
-            print_and_remember(
-                colorize(f"{sender_name} left the conversation", "magenta")
-            )
-            return S4P_Response.MESGSENT(f"message recieved ;)", None)
-        print_and_remember(
-            f"{colorize(f'{sender_name} >> ', 'yellow')} {message}",
-            ending_line="you >> ",
-        )
-        return S4P_Response.MESGSENT(f"message recieved", None)
-
-    def start_socket(self):
-        pass
-
-    def deactivate(self):
-        self.socket.close()
-
 
 class PeerServer(threading.Thread):
     def __init__(self, address="127.0.0.1"):
         super().__init__()
         self.tcp_manager = PeerTCPManager(address)
-        self.udp_manager = PeerUDPManager(address)
         self.peer_credentials = None
         logging.info(f"peer tcp port: {self.tcp_manager.port}")
-        logging.info(f"peer udp port: {self.udp_manager.port}")
         self.work_event = threading.Event()
         self.server_thread = None
 
     def set_user(self, user):
         self.tcp_manager.user = user
-        self.udp_manager.user = user
 
     def setup_chat(self, chat_key):
         self.tcp_manager.setup_chat(chat_key)
+        self.tcp_manager
 
     def end_chat(self):
         self.tcp_manager.end_chat()
 
     def _activate(self):
         self.tcp_manager.start_socket()
-        self.udp_manager.start_socket()
 
     def _deactivate(self):
         self.tcp_manager.deactivate()
-        self.udp_manager.deactivate()
 
     def run(self):
-        logging.info(f"started listening at :{self.udp_manager.port}")
         self.work_event.set()
         self._activate()
         socket_to_manager = {
-            mngr.socket: mngr for mngr in [self.tcp_manager, self.udp_manager]
+            mngr.socket: mngr for mngr in [self.tcp_manager]
         }
 
         self.server_thread = threading.current_thread()

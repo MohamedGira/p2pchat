@@ -19,7 +19,7 @@ class UsersMonitor(threading.Thread):
                 try:
                     if user.get("last_seen") is None:
                         DB.logout(user.get("username"))
-                    if (get_timesamp() - user.get("last_seen")) > 20:
+                    if (get_timesamp() - user.get("last_seen")) > 12:
                         DB.logout(user.get("username"))
                 except Exception as e:
                     pass

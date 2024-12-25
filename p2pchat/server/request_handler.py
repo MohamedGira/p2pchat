@@ -217,85 +217,9 @@ class GetOnlinePeersHandler(RequestHandler):
         return SUAP_Response.NEWLOG(f"Online users ", data={"users": users})
 
 
-class CreateRoomRequestHandler(RequestHandler):
-    @staticmethod
-    def handle_request(connection_address, request):
-        if not validate_request(request["body"], ["user", "chatroom_key"]):
-            raise ValueError(
-                "Invalid Request, creating a room requires a user to be signed id"
-            )
-        try:
-            res = DB.create_chatroom(
-                request["body"]["chatroom_key"], request["body"]["user"]["_id"]
-            )
-        except Exception as e:
-            return S4P_Response.ISIDLERM(f"Couldn't create room: {e}")
-
-        return S4P_Response.CREATDRM(
-            f"Room was created successfully", data={"result": res}
-        )
 
 
-class ListRoomsRequestHandler(RequestHandler):
-    @staticmethod
-    def handle_request(connection_address, request):
-        if not validate_request(request["body"], ["user"]):
-            raise ValueError(
-                "Invalid Request, getting online peers requires a user to be signed id"
-            )
-        try:
-            res = DB.get_chatrooms_admins()
-        except Exception as e:
-            return S4P_Response.UNKNWNDR(f"something went wrong: {e}")
 
-        return S4P_Response.RMSLISTS(f"Rooms where found", data={"rooms": res})
-
-
-class AdmitUserRequestHandler(RequestHandler):
-    @staticmethod
-    def handle_request(connection_address, request):
-        if not validate_request(
-            request.get("body", {}), ["caller", "chatroom_key", "user"]
-        ):
-            raise ValueError(
-                "Invalid Request, requires caller, chatroom_key and user to be registered"
-            )
-        try:
-            if not DB.is_room_owner(
-                request["body"]["chatroom_key"], request["body"]["caller"].get("_id")
-            ):
-                return S4P_Response.INCRAUTH(f"Only room owners can admit users")
-            res = DB.join_chatroom(
-                request["body"]["chatroom_key"], request["body"]["user"]["_id"]
-            )
-        except Exception as e:
-            return S4P_Response.UNKNWNDR(f"something went wrong: {e}")
-
-        return S4P_Response.JOINEDRM(
-            f"User was admitted successfully", data={"result": res}
-        )
-
-
-class GetRoomMembersRequestHandler(RequestHandler):
-    @staticmethod
-    def handle_request(connection_address, request):
-        if not validate_request(request.get("body", {}), ["caller", "chatroom_key"]):
-            print(request)
-            raise ValueError(
-                "Invalid Request, requires caller, chatroom_key and user to be registered"
-            )
-        try:
-            res = DB.get_chatroom_members(request["body"]["chatroom_key"])
-            if not res or request["body"]["caller"].get("username") not in [
-                i.get("username") for i in res
-            ]:
-                return S4P_Response.RMNOTACK(
-                    f"Room doesn't exist, or you are not a member"
-                )
-        except Exception as e:
-            return S4P_Response.UNKNWNDR(f"something went wrong: {e}")
-
-        return S4P_Response.RMSLISTS(f"Room members where found", data={"members": res})
 
 
 def handler_factory(request_type) -> RequestHandler:
@@ -305,10 +229,6 @@ def handler_factory(request_type) -> RequestHandler:
         "LGDN": IsLoggedRequestHandler,
         "CLRS": ClearSessionRequestHandler,
         "GTOP": GetOnlinePeersHandler,
-        "CRTM": CreateRoomRequestHandler,
-        "LISTRM": ListRoomsRequestHandler,
-        "ADMTUSR": AdmitUserRequestHandler,
-        "GTRM": GetRoomMembersRequestHandler,
     }
     if request_type in handlers:
         return handlers.get(request_type)
