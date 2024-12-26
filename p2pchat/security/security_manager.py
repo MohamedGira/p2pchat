@@ -21,14 +21,12 @@ class SecurityManager:
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
-                # Double-checked locking pattern
                 if cls._instance is None:
                     cls._instance = super(SecurityManager, cls).__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
-        # Ensure initialization happens only once
         if not self._initialized:
             self.symmetric_key = None
             self.private_key = None
@@ -36,6 +34,7 @@ class SecurityManager:
             self.fernet = None
             self._initialize_keys()
             self._initialized = True
+
     def reset(self):
         self.symmetric_key = None
         self.private_key = None
@@ -43,17 +42,22 @@ class SecurityManager:
         self.fernet = None
         self._initialize_keys()
         self._initialized = True
+
     def _initialize_keys(self):
         """Initialize both symmetric and asymmetric keys"""
-        # Generate RSA key pair
         self.private_key = rsa.generate_private_key(
             public_exponent=65537, key_size=2048
         )
         self.public_key = self.private_key.public_key()
 
-        # Generate symmetric key
         self.symmetric_key = Fernet.generate_key()
         self.fernet = Fernet(self.symmetric_key)
+
+    def _calculate_hash(self, data: bytes) -> bytes:
+        """Calculate SHA-256 hash of data"""
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(data)
+        return digest.finalize()
 
     def get_public_key_bytes(self):
         """Export public key in PEM format"""
@@ -65,10 +69,13 @@ class SecurityManager:
     def encrypt_message(self, message: str) -> dict:
         """
         Encrypt a message using symmetric encryption.
-        Returns a dictionary with the encrypted message and its signature.
+        Returns a dictionary with the encrypted message, its signature, and hash.
         """
         message_bytes = message.encode()
         encrypted_message = self.fernet.encrypt(message_bytes)
+
+        # Calculate hash of original message
+        message_hash = self._calculate_hash(message_bytes)
 
         # Create digital signature
         signature = self.private_key.sign(
@@ -79,28 +86,22 @@ class SecurityManager:
             hashes.SHA256(),
         )
 
-        # print(
-        #     {
-        #         "message": base64.b64encode(encrypted_message).decode("utf-8"),
-        #         "signature": base64.b64encode(signature).decode("utf-8"),
-        #     }
-        # )
         return {
             "message": base64.b64encode(encrypted_message).decode("utf-8"),
             "signature": base64.b64encode(signature).decode("utf-8"),
+            "hash": base64.b64encode(message_hash).decode("utf-8"),
         }
 
     def decrypt_message(
         self, encrypted_data: dict, sender_public_key_bytes: bytes
     ) -> str:
         """
-        Decrypt a message and verify its signature using the sender's public key.
+        Decrypt a message and verify its signature and hash using the sender's public key.
         """
         try:
             encrypted_message = base64.b64decode(encrypted_data["message"])
             signature = base64.b64decode(encrypted_data["signature"])
-            # print("encrypted_message", encrypted_message)
-            # print("signature", signature)
+            original_hash = base64.b64decode(encrypted_data["hash"])
 
             # Load sender's public key
             sender_public_key = serialization.load_pem_public_key(
@@ -120,6 +121,12 @@ class SecurityManager:
 
             # Decrypt message
             decrypted_message = KeyExchange().peer_fernet.decrypt(encrypted_message)
+
+            # Verify hash
+            computed_hash = self._calculate_hash(decrypted_message)
+            if not computed_hash == original_hash:
+                raise ValueError("Message integrity check failed: hash mismatch")
+
             return decrypted_message.decode()
 
         except Exception as e:
@@ -157,6 +164,7 @@ class KeyExchange:
         self.peer_fernet_key = None
         self.peer_fernet = None
         self._initialized = True
+
     def initiate_exchange(self) -> bytes:
         """
         Initiate key exchange by sending public key
@@ -181,14 +189,13 @@ class KeyExchange:
             self.setup_peer_fernet(self.peer_fernet_key)
 
         return True
-    def setup_peer_fernet(self,fernet_key):
-        print("setting peer fernet key")
-        print(SecurityManager().symmetric_key,"befor")
+
+    def setup_peer_fernet(self, fernet_key):
         self.peer_fernet_key = fernet_key
         self.peer_fernet = Fernet(self.peer_fernet_key)
         SecurityManager().symmetric_key = fernet_key
-        SecurityManager().fernet=self.peer_fernet
-        print(SecurityManager().symmetric_key,"after")
+        SecurityManager().fernet = self.peer_fernet
+
     def encrypt_fernet_key(self, fernet_key: bytes) -> bytes:
         """Encrypt Fernet key using peer's public key"""
         if isinstance(KeyExchange().peer_public_key, bytes):
