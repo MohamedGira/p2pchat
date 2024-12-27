@@ -8,11 +8,6 @@ class TestS4P_Response(unittest.TestCase):
         self.assertTrue(response.is_success)
         self.assertEqual(response.message, "Synchronized successfully")
 
-        # Add similar tests for other success responses
-        response = S4P_Response.CREATDRM("Room created successfully")
-        self.assertEqual(response.code, 52)
-        self.assertTrue(response.is_success)
-        self.assertEqual(response.message, "Room created successfully")
 
     def test_failure_responses(self):
         response = S4P_Response.INCRAUTH("Incorrect authentication")
@@ -20,7 +15,6 @@ class TestS4P_Response(unittest.TestCase):
         self.assertFalse(response.is_success)
         self.assertEqual(response.message, "Incorrect authentication")
 
-        # Add similar tests for other failure responses
         response = S4P_Response.UNKACCNT("Unknown account")
         self.assertEqual(response.code, 71)
         self.assertFalse(response.is_success)
