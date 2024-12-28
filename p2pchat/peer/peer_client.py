@@ -138,8 +138,8 @@ class ClientTCPThread:
             SUAP_Request.logn_request(
                 self.server_public_key.encrypt(username.encode(),security_manager.SecurityManager().default_padding),
                 self.server_public_key.encrypt(password.encode(),security_manager.SecurityManager().default_padding),
-                port_tcp,
-                port_udp,
+                tcp_port,
+                udp_port,
             )
         )
         response = self.transceiver.recieve_message()
