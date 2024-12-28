@@ -34,6 +34,12 @@ class SecurityManager:
             self.fernet = None
             self._initialize_keys()
             self._initialized = True
+            self.default_padding = padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                )
+            
 
     def reset(self):
         self.symmetric_key = None
@@ -49,7 +55,6 @@ class SecurityManager:
             public_exponent=65537, key_size=2048
         )
         self.public_key = self.private_key.public_key()
-
         self.symmetric_key = Fernet.generate_key()
         self.fernet = Fernet(self.symmetric_key)
 

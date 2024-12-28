@@ -37,6 +37,7 @@ class AuthenticationManager:
         "LISTRM",
         "ADMTUSR",
         "GTRM",
+        "PBKY"
     }
 
     def __init__(self, connection_address):

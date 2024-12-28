@@ -68,6 +68,10 @@ class SUAP_Response:
         return SUAP_Response(12, message, True)
 
     @staticmethod
+    def PBKEY(message: str,data) -> "SUAP_Response":
+        return SUAP_Response(10, message, True,data)
+    
+    @staticmethod
     def LGDOUT(message: str) -> "SUAP_Response":
         return SUAP_Response(13, message, True)
 
@@ -115,11 +119,15 @@ Moved the functionalities within to the AuthenticationManager class
 
 
 class SUAP_Request:
-    types = {"RGST", "LOGN", "LGDN", "CLRS"}
+    types = {"PBKY","RGST", "LOGN", "LGDN", "CLRS"}
 
     def __init__(self, connection):
         self.connection = connection
         self.type = None
+
+    @staticmethod
+    def pbky_request() -> dict:
+        return {"type": "PBKY"}
 
     @staticmethod
     def rgst_request(username: str, password: str) -> dict:

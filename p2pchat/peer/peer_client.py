@@ -6,6 +6,7 @@ import pickle
 from time import sleep
 from tabulate import tabulate
 from typing import Union
+from cryptography.hazmat.primitives import serialization
 
 from p2pchat.protocols.tcp_request_transceiver import (
     TCPRequestTransceiver,
@@ -24,7 +25,7 @@ import logging
 
 # logging.basicConfig(level=logging.DEBUG)
 from p2pchat.custom_logger import app_logger  # may use different loggers later
-from p2pchat.globals import not_chatting, peer_left, ignore_input, is_in_chat
+from p2pchat.globals import *
 from p2pchat.utils.utils import validate_request
 from p2pchat.security import security_manager
 
@@ -43,7 +44,7 @@ class KeepAliveThread(threading.Thread):
         self.user = user
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.shutdown_flag = threading.Event()
-
+        
     def run(self):
         logging.info(f"UDP client thread started")
         while not self.shutdown_flag.is_set():
@@ -87,7 +88,7 @@ class ClientTCPThread:
         self.server_port = server_port
         self.transceiver = TCPRequestTransceiver(None)
         self.client_auth = ClientAuth()  # instance
-
+        self.server_public_key=None
     def connect(self):
         try:
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -105,26 +106,64 @@ class ClientTCPThread:
             app_logger.error("An error occurred during connection:", e)
         return False
 
+    def _get_public_key(self):
+        if not self.server_public_key:
+            if not (self.connect()):
+                return {
+                    "header": "",
+                    "body": {"is_success": False, "message": "Connection failed"},
+                }
+            self.transceiver.send_message(SUAP_Request.pbky_request())
+            response = self.transceiver.recieve_message()
+            self.client_socket.close()
+            if response.get("body", {}).get("is_success"):
+                self.server_public_key = serialization.load_pem_public_key(
+                    response.get("body",{}).get("data",{}).get("key")
+                )
+        return self.server_public_key
+
     def login(self, username, password, tcp_port, udp_port):
+        self._get_public_key()
+        if not self.server_public_key:
+            return {
+                "header": "",
+                "body": {"is_success": False, "message": "failed to fetch public key"},
+            }
         if not (self.connect()):
             return {
                 "header": "",
                 "body": {"is_success": False, "message": "Connection failed"},
             }
         self.transceiver.send_message(
-            SUAP_Request.logn_request(username, password, tcp_port, udp_port)
+            SUAP_Request.logn_request(
+                self.server_public_key.encrypt(username.encode(),security_manager.SecurityManager().default_padding),
+                self.server_public_key.encrypt(password.encode(),security_manager.SecurityManager().default_padding),
+                port_tcp,
+                port_udp,
+            )
         )
         response = self.transceiver.recieve_message()
         self.client_socket.close()
         return response
 
     def signup(self, username, password):
+        self._get_public_key()
+        if not self.server_public_key:
+            return {
+                "header": "",
+                "body": {"is_success": False, "message": "failed to fetch public key"},
+            }
         if not (self.connect()):
             return {
                 "header": "",
                 "body": {"is_success": False, "message": "Connection failed"},
             }
-        self.transceiver.send_message(SUAP_Request.rgst_request(username, password))
+        self.transceiver.send_message(
+            SUAP_Request.rgst_request(
+                self.server_public_key.encrypt(username.encode(),security_manager.SecurityManager().default_padding),
+                self.server_public_key.encrypt(password.encode(),security_manager.SecurityManager().default_padding),
+            )
+        )
         response = self.transceiver.recieve_message()
         self.client_socket.close()
         return response
@@ -357,7 +396,9 @@ class PeerClient:
         if response and response.get("body").get("code") == 57:
             security_manager.KeyExchange().complete_exchange(
                 peer_public_key_bytes=response.get("body").get("data").get("key"),
-                encrypted_fernet_key= response.get("body").get("data").get("symmetric_key")
+                encrypted_fernet_key=response.get("body")
+                .get("data")
+                .get("symmetric_key"),
             )
         ##exchange keys here
         return PeerClient.process_response(response)

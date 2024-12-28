@@ -3,7 +3,7 @@ import bcrypt
 from p2pchat.protocols.suap import SUAP_Response
 from p2pchat.protocols.s4p import S4P_Response
 from p2pchat.utils.utils import validate_request
-
+from p2pchat.security.security_manager import SecurityManager
 from p2pchat.server.server_db import myDB as DB
 
 
@@ -15,6 +15,21 @@ class RequestHandler:
     @staticmethod
     def handle_request(connection_address, request) -> SUAP_Response:
         raise NotImplementedError
+
+
+class PublicKeyRequestHandler(RequestHandler):
+    """
+    class that is responsible for handling an incoming registeration request
+    """
+
+    def handle_request(connection_address, request) -> SUAP_Response:
+        """
+        parses the recieved request and handle it accordingly
+        """
+        return SUAP_Response.PBKEY(
+            f"PublicKeyRetrieved",
+            data={"key": SecurityManager().get_public_key_bytes()},
+        )
 
 
 class RegisterationRequestHandler(RequestHandler):
@@ -30,15 +45,23 @@ class RegisterationRequestHandler(RequestHandler):
             raise Exception(
                 "Invalid Request, Registration mush have username and password"
             )
-        username = request.get("body").get("username")
-        password = request.get("body").get("password")
+        username = (
+            SecurityManager()
+            .private_key.decrypt(
+                request.get("body").get("username"),
+                padding=SecurityManager().default_padding,
+            )
+            .decode()
+        )
+        password = SecurityManager().private_key.decrypt(
+            request.get("body").get("password"),
+            padding=SecurityManager().default_padding,
+        )
         # Check if account with such username already exists
         if DB.account_exists(username):
             return SUAP_Response.CNFLCT("Username already exists")
 
-        DB.register_user(
-            username, bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-        )
+        DB.register_user(username, bcrypt.hashpw(password, bcrypt.gensalt()))
         return SUAP_Response.NEWREG(f"Account {username} created successfully")
 
 
@@ -59,8 +82,23 @@ class LoginRequestHandler(RequestHandler):
             request["body"], ["username", "password", "tcp_port", "udp_port"]
         ):
             raise ValueError("Invalid Request, Login must have username and password")
-        username = request.get("body").get("username")
-        password = request.get("body").get("password")
+        username = (
+            SecurityManager()
+            .private_key.decrypt(
+                request.get("body").get("username"),
+                padding=SecurityManager().default_padding,
+            )
+            .decode()
+        )
+        password = (
+            SecurityManager()
+            .private_key.decrypt(
+                request.get("body").get("password"),
+                padding=SecurityManager().default_padding,
+            )
+            .decode()
+        )
+
         tcp_port = request.get("body").get("tcp_port")
         udp_port = request.get("body").get("udp_port")
         # Check if account with such username exists
@@ -217,13 +255,9 @@ class GetOnlinePeersHandler(RequestHandler):
         return SUAP_Response.NEWLOG(f"Online users ", data={"users": users})
 
 
-
-
-
-
-
 def handler_factory(request_type) -> RequestHandler:
     handlers = {
+        "PBKY": PublicKeyRequestHandler,
         "RGST": RegisterationRequestHandler,
         "LOGN": LoginRequestHandler,
         "LGDN": IsLoggedRequestHandler,

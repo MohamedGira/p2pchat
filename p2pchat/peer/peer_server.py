@@ -259,6 +259,6 @@ class PeerServer(threading.Thread):
             self.server_thread.join()
 
         self._deactivate()
-        for manager in [self.tcp_manager, self.udp_manager]:
+        for manager in [self.tcp_manager]:
             if manager.socket:
                 manager.socket.close()
