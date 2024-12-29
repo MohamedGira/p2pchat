@@ -5,3 +5,4 @@ tabulate
 pwinput
 matplotlib
 psutil
+cryptography

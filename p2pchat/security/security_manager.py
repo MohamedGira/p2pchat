@@ -135,7 +135,7 @@ class SecurityManager:
             return decrypted_message.decode()
 
         except Exception as e:
-            raise ValueError(f"Message verification failed: {str(e)}")
+            raise ValueError(f"connection attempted")
 
 
 class KeyExchange:
